@@ -8,7 +8,7 @@ use crossterm::{
 	QueueableCommand,
 };
 use futures::lock::Mutex;
-use log::{debug, error, info, warn, LevelFilter};
+use log::LevelFilter;
 use rasciigraph::{plot, Config};
 use std::{
 	collections::VecDeque,
@@ -102,7 +102,7 @@ enum RspamdAction {
 	ActionHam,
 	ActionSpam,
 	ActionJunk,
-	ActionSoftReject,
+	ActionTotal,
 	ActionUnknown,
 }
 
@@ -112,7 +112,7 @@ impl Into<&'static str> for RspamdAction {
 			RspamdAction::ActionHam => "ham",
 			RspamdAction::ActionSpam => "spam",
 			RspamdAction::ActionJunk => "junk",
-			RspamdAction::ActionSoftReject => "soft reject",
+			RspamdAction::ActionTotal => "total",
 			RspamdAction::ActionUnknown => "unknown",
 		}
 	}
@@ -123,8 +123,7 @@ impl From<&'static str> for RspamdAction {
 		match s {
 			"no action" => RspamdAction::ActionHam,
 			"no_action" => RspamdAction::ActionHam,
-			"soft reject" => RspamdAction::ActionSoftReject,
-			"soft_reject" => RspamdAction::ActionSoftReject,
+			"total" => RspamdAction::ActionTotal,
 			"add header" => RspamdAction::ActionJunk,
 			"add_header" => RspamdAction::ActionJunk,
 			"rewrite subject" => RspamdAction::ActionJunk,
@@ -177,7 +176,7 @@ struct RspamdStat {
 	spam_stats: RspamdStatElement,
 	ham_stats: RspamdStatElement,
 	junk_stats: RspamdStatElement,
-	soft_reject_stats: RspamdStatElement,
+	total: RspamdStatElement,
 }
 
 impl RspamdStat {
@@ -186,7 +185,7 @@ impl RspamdStat {
 			spam_stats: RspamdStatElement::new(nelts, RspamdAction::ActionSpam, false),
 			ham_stats: RspamdStatElement::new(nelts, RspamdAction::ActionHam, false),
 			junk_stats: RspamdStatElement::new(nelts, RspamdAction::ActionJunk, false),
-			soft_reject_stats: RspamdStatElement::new(nelts, RspamdAction::ActionSoftReject, false),
+			total: RspamdStatElement::new(nelts, RspamdAction::ActionTotal, false),
 		}
 	}
 
@@ -196,10 +195,15 @@ impl RspamdStat {
 		elapsed: Duration,
 	) -> Result<(), Box<dyn Error + Send + Sync>> {
 		let actions = json.get("actions").ok_or(eyre!("missing actions"))?;
-		let _ = update_specific_from_json(&mut self.spam_stats, actions, "reject", elapsed)?;
-		let _ = update_specific_from_json(&mut self.ham_stats, actions, "no action", elapsed)?;
-		let _ = update_specific_from_json(&mut self.junk_stats, actions, "add header", elapsed)?;
-		let _ = update_specific_from_json(&mut self.soft_reject_stats, actions, "soft reject", elapsed)?;
+		let spam_cnt = update_specific_from_json(&mut self.spam_stats, actions, ["reject"].as_slice(), elapsed)?;
+		let ham_cnt = update_specific_from_json(&mut self.ham_stats, actions, ["no action"].as_slice(), elapsed)?;
+		let junk_cnt = update_specific_from_json(
+			&mut self.junk_stats,
+			actions,
+			["add header", "rewrite subject"].as_slice(),
+			elapsed,
+		)?;
+		self.total.update((spam_cnt + ham_cnt + junk_cnt) as f64, elapsed)?;
 		Ok(())
 	}
 
@@ -207,7 +211,7 @@ impl RspamdStat {
 		show_specific_counter(&self.spam_stats, 0_u16, max_height);
 		show_specific_counter(&self.ham_stats, 1_u16, max_height);
 		show_specific_counter(&self.junk_stats, 2_u16, max_height);
-		show_specific_counter(&self.soft_reject_stats, 3_u16, max_height);
+		show_specific_counter(&self.total, 3_u16, max_height);
 	}
 }
 
@@ -240,12 +244,16 @@ fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) {
 fn update_specific_from_json(
 	elt: &mut RspamdStatElement,
 	actions_json: &serde_json::Value,
-	field: &'static str,
+	field: &[&'static str],
 	elapsed: Duration,
 ) -> Result<f64, Box<dyn Error + Send + Sync>> {
-	let extracted = actions_json.get(field).ok_or(eyre!("missing action {}", field))?;
-	let extracted = extracted.as_u64().ok_or(eyre!("non numeric action count: {}", field))?;
-	elt.update(extracted as f64, elapsed)
+	let total = field.iter().fold(0_u64, |acc, field| {
+		let extracted = actions_json.get(field);
+		let extracted = extracted.map(|v| v.as_u64().unwrap_or(0_u64));
+		acc + extracted.unwrap_or(0_u64)
+	});
+	elt.update(total as f64, elapsed)?;
+	Ok(total as f64)
 }
 
 #[tokio::main]
