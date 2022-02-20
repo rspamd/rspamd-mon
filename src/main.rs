@@ -25,7 +25,7 @@ pub(crate) struct CliOpts {
 	/// Chart height.
 	#[clap(long, default_value = "6")]
 	chart_height: usize,
-	#[clap(name = "url", long, default_value = "http://localhost:11334")]
+	#[clap(name = "url", long, default_value = "http://localhost:11334/stat")]
 	url: String,
 	/// Verbosity level: -v - info, -vv - debug, -vvv - trace
 	#[clap(short = 'v', long, parse(from_occurrences))]
