@@ -98,37 +98,37 @@ impl Counter<f64> for DiffCounter {
 
 /// Actions we recognize
 #[derive(Clone, Copy)]
-enum RspamdAction {
-	ActionHam,
-	ActionSpam,
-	ActionJunk,
-	ActionTotal,
-	ActionUnknown,
+enum CounterAction {
+	Ham,
+	Spam,
+	Junk,
+	Total,
+	Unknown,
 }
 
-impl Into<&'static str> for RspamdAction {
-	fn into(self) -> &'static str {
-		match self {
-			RspamdAction::ActionHam => "ham",
-			RspamdAction::ActionSpam => "spam",
-			RspamdAction::ActionJunk => "junk",
-			RspamdAction::ActionTotal => "total",
-			RspamdAction::ActionUnknown => "unknown",
+impl From<CounterAction> for &'static str {
+	fn from(a: CounterAction) -> &'static str {
+		match a {
+			CounterAction::Ham => "ham",
+			CounterAction::Spam => "spam",
+			CounterAction::Junk => "junk",
+			CounterAction::Total => "total",
+			CounterAction::Unknown => "unknown",
 		}
 	}
 }
 
-impl From<&'static str> for RspamdAction {
+impl From<&'static str> for CounterAction {
 	fn from(s: &'static str) -> Self {
 		match s {
-			"no action" => RspamdAction::ActionHam,
-			"no_action" => RspamdAction::ActionHam,
-			"total" => RspamdAction::ActionTotal,
-			"add header" => RspamdAction::ActionJunk,
-			"add_header" => RspamdAction::ActionJunk,
-			"rewrite subject" => RspamdAction::ActionJunk,
-			"rewrite_subject" => RspamdAction::ActionJunk,
-			_ => RspamdAction::ActionUnknown,
+			"no action" => CounterAction::Ham,
+			"no_action" => CounterAction::Ham,
+			"total" => CounterAction::Total,
+			"add header" => CounterAction::Junk,
+			"add_header" => CounterAction::Junk,
+			"rewrite subject" => CounterAction::Junk,
+			"rewrite_subject" => CounterAction::Junk,
+			_ => CounterAction::Unknown,
 		}
 	}
 }
@@ -142,11 +142,11 @@ struct RspamdStatElement {
 
 impl RspamdStatElement {
 	/// Creates a new stat element
-	pub fn new(nelts: usize, action: RspamdAction, is_gauge: bool) -> Self {
+	pub fn new(nelts: usize, action: CounterAction, is_gauge: bool) -> Self {
 		let counter: Box<dyn Counter<f64> + Send> = if is_gauge {
-			Box::new(GaugeCounter::new(action.clone().into()))
+			Box::new(GaugeCounter::new(action.into()))
 		} else {
-			Box::new(DiffCounter::new(action.clone().into()))
+			Box::new(DiffCounter::new(action.into()))
 		};
 
 		Self { values: VecDeque::with_capacity(nelts), counter, nelts }
@@ -182,10 +182,10 @@ struct RspamdStat {
 impl RspamdStat {
 	pub fn new(nelts: usize) -> Self {
 		Self {
-			spam_stats: RspamdStatElement::new(nelts, RspamdAction::ActionSpam, false),
-			ham_stats: RspamdStatElement::new(nelts, RspamdAction::ActionHam, false),
-			junk_stats: RspamdStatElement::new(nelts, RspamdAction::ActionJunk, false),
-			total: RspamdStatElement::new(nelts, RspamdAction::ActionTotal, false),
+			spam_stats: RspamdStatElement::new(nelts, CounterAction::Spam, false),
+			ham_stats: RspamdStatElement::new(nelts, CounterAction::Ham, false),
+			junk_stats: RspamdStatElement::new(nelts, CounterAction::Junk, false),
+			total: RspamdStatElement::new(nelts, CounterAction::Total, false),
 		}
 	}
 
@@ -216,7 +216,7 @@ impl RspamdStat {
 }
 
 fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) {
-	if elt.values.len() == 0 {
+	if elt.values.is_empty() {
 		panic!("tried to display graph for an empty values");
 	}
 
@@ -232,13 +232,13 @@ fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) {
 		.with_width(elt.nelts() as u32)
 		.with_caption(format!(
 			"Messages per second [Action: {}] [LAST: {}] [AVG: {}] [MIN: {}] [MAX: {}]",
-			format!("{}", elt.counter.label()).bold(),
+			elt.counter.label().to_string().bold(),
 			format!("{:.2}", last).bright_purple().underline(),
 			format!("{:.2}", avg).white().bold(),
 			format!("{:.2}", min).green().bold(),
 			format!("{:.2}", max).red().bold(),
 		));
-	let _ = stdout().write(format!("{}", plot(scaled_values.into(), plot_config)).as_bytes());
+	let _ = stdout().write(plot(scaled_values.into(), plot_config).as_bytes());
 }
 
 fn update_specific_from_json(
@@ -302,7 +302,7 @@ async fn main() -> color_eyre::Result<()> {
 					if niter > 0 {
 						stats_unlocked.display_chart(opts.chart_height as u16);
 					}
-					niter = niter + 1;
+					niter += 1;
 
 					Ok(())
 				},
