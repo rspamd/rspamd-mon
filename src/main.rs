@@ -1,14 +1,15 @@
 use clap::Parser;
 
-use color_eyre::eyre::{eyre, WrapErr};
+use color_eyre::eyre::eyre;
 use colored::Colorize;
 use crossterm::{
 	cursor,
 	terminal::{Clear, ClearType},
 	QueueableCommand,
 };
-use futures::{future, lock::Mutex};
+use futures::lock::Mutex;
 use log::{debug, error, info, warn, LevelFilter};
+use rasciigraph::{plot, Config};
 use std::{
 	collections::VecDeque,
 	error::Error,
@@ -43,13 +44,14 @@ struct CounterData<T> {
 }
 
 /// A trait used to represent counters update
-trait Counter<T> {
+pub trait Counter<T> {
 	/// Update for new value
 	fn update(&mut self, new_value: T, ms: usize) -> Result<T, Box<dyn Error + Send + Sync>>;
 	/// Creates a new counter
 	fn new(label: &'static str) -> Self
 	where
 		Self: Sized + Send + Sync;
+	fn label(&self) -> &'static str;
 }
 
 /// A counter which is used to represent gauge
@@ -64,6 +66,10 @@ impl Counter<f64> for GaugeCounter {
 
 	fn new(label: &'static str) -> Self {
 		Self(CounterData { cur_value: 0_f64, label })
+	}
+
+	fn label(&self) -> &'static str {
+		self.0.label
 	}
 }
 
@@ -83,6 +89,10 @@ impl Counter<f64> for DiffCounter {
 
 	fn new(label: &'static str) -> Self {
 		Self(CounterData { cur_value: f64::NAN, label })
+	}
+
+	fn label(&self) -> &'static str {
+		self.0.label
 	}
 }
 
@@ -127,8 +137,8 @@ impl From<&'static str> for RspamdAction {
 /// Used to track each action
 struct RspamdStatElement {
 	values: VecDeque<f64>,
-	action: RspamdAction,
 	counter: Box<dyn Counter<f64> + Send>,
+	nelts: usize,
 }
 
 impl RspamdStatElement {
@@ -140,7 +150,7 @@ impl RspamdStatElement {
 			Box::new(DiffCounter::new(action.clone().into()))
 		};
 
-		Self { values: VecDeque::with_capacity(nelts), action, counter }
+		Self { values: VecDeque::with_capacity(nelts), counter, nelts }
 	}
 
 	pub fn update(&mut self, value: f64, elapsed: Duration) -> Result<f64, Box<dyn Error + Send + Sync>> {
@@ -148,13 +158,17 @@ impl RspamdStatElement {
 		let nv = self.counter.update(value, ms)?;
 
 		// Expire one
-		if self.values.len() == self.values.capacity() {
-			self.values.pop_back();
+		if self.values.len() >= self.nelts {
+			self.values.pop_front();
 		}
 
-		self.values.push_front(nv);
+		self.values.push_back(nv);
 
 		Ok(nv)
+	}
+
+	pub fn nelts(&self) -> usize {
+		self.nelts
 	}
 }
 
@@ -188,6 +202,39 @@ impl RspamdStat {
 		let _ = update_specific_from_json(&mut self.soft_reject_stats, actions, "soft reject", elapsed)?;
 		Ok(())
 	}
+
+	pub fn display_chart(&self, max_height: u16) {
+		show_specific_counter(&self.spam_stats, 0_u16, max_height);
+		show_specific_counter(&self.ham_stats, 1_u16, max_height);
+		show_specific_counter(&self.junk_stats, 2_u16, max_height);
+		show_specific_counter(&self.soft_reject_stats, 3_u16, max_height);
+	}
+}
+
+fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) {
+	if elt.values.len() == 0 {
+		panic!("tried to display graph for an empty values");
+	}
+
+	let _ = stdout().queue(cursor::MoveTo(0, row * (max_height + 3)));
+
+	let scaled_values: VecDeque<f64> = elt.values.iter().map(|v| *v * 1000_f64).collect();
+	let avg = scaled_values.iter().sum::<f64>() / scaled_values.len() as f64;
+	let min = *scaled_values.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0_f64);
+	let max = *scaled_values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0_f64);
+	let last = *scaled_values.back().unwrap_or(&0.0);
+	let plot_config = Config::default()
+		.with_height(max_height as u32)
+		.with_width(elt.nelts() as u32)
+		.with_caption(format!(
+			"Messages per second [Action: {}] [LAST: {}] [AVG: {}] [MIN: {}] [MAX: {}]",
+			format!("{}", elt.counter.label()).bold(),
+			format!("{:.2}", last).bright_purple().underline(),
+			format!("{:.2}", avg).white().bold(),
+			format!("{:.2}", min).green().bold(),
+			format!("{:.2}", max).red().bold(),
+		));
+	let _ = stdout().write(format!("{}", plot(scaled_values.into(), plot_config)).as_bytes());
 }
 
 fn update_specific_from_json(
@@ -224,12 +271,11 @@ async fn main() -> color_eyre::Result<()> {
 
 	tokio::spawn(async move {
 		let stats = stats.clone();
+		let mut niter = 0;
 		loop {
+			let _ = stdout().flush();
 			let timeout = Duration::from_secs_f32(opts.timeout);
-			let client = reqwest::Client::builder()
-				.timeout(Duration::from_secs_f32(opts.timeout / 2.0))
-				.user_agent("rspamd-mon")
-				.build()?;
+			let client = reqwest::Client::builder().timeout(timeout).user_agent("rspamd-mon").build()?;
 			let req = client.get(opts.url.as_str()).send();
 			let resp = match req.await {
 				Ok(o) => o.bytes(),
@@ -245,11 +291,15 @@ async fn main() -> color_eyre::Result<()> {
 					stats_unlocked
 						.update_from_json(json, timeout)
 						.map_err(|e| eyre!("cannot get results from {}: {}", opts.url.as_str(), e))?;
+					if niter > 0 {
+						stats_unlocked.display_chart(opts.chart_height as u16);
+					}
+					niter = niter + 1;
+
 					Ok(())
 				},
 				Err(e) => Err(eyre!("cannot get results from {}: {}", opts.url.as_str(), e)),
 			}?;
-			let _ = stdout().flush();
 			tokio::time::sleep(timeout).await;
 		}
 	})
