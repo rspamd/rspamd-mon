@@ -276,14 +276,13 @@ async fn main() -> color_eyre::Result<()> {
 		.format_timestamp(Some(env_logger::fmt::TimestampPrecision::Micros))
 		.try_init()?;
 
-	let _ = stdout().queue(Clear(ClearType::All)).unwrap();
 	let stats = Arc::new(Mutex::new(RspamdStat::new(opts.chart_width)));
 
 	tokio::spawn(async move {
 		let stats = stats.clone();
 		let mut niter = 0;
 		loop {
-			let _ = stdout().flush();
+			let _ = stdout().queue(Clear(ClearType::All)).unwrap();
 			let timeout = Duration::from_secs_f32(opts.timeout);
 			let client = reqwest::Client::builder().timeout(timeout).user_agent("rspamd-mon").build()?;
 			let req = client.get(opts.url.as_str()).send();
@@ -310,6 +309,7 @@ async fn main() -> color_eyre::Result<()> {
 				},
 				Err(e) => Err(eyre!("cannot get results from {}: {}", opts.url.as_str(), e)),
 			}?;
+			let _ = stdout().flush();
 			tokio::time::sleep(timeout).await;
 		}
 	})
