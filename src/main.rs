@@ -79,7 +79,7 @@ struct DiffCounter(CounterData<f64>);
 impl Counter<f64> for DiffCounter {
 	fn update(&mut self, new_value: f64, ms: usize) -> Result<f64, Box<dyn Error + Send + Sync>> {
 		let old_value = self.0.cur_value;
-		let diff = if old_value.is_nan() { 0_f64 } else { new_value - old_value };
+		let diff = if old_value.is_nan() { f64::NAN } else { new_value - old_value };
 		self.0.cur_value = new_value;
 		match ms {
 			0 => Err("division by zero".to_owned().into()),
@@ -156,12 +156,14 @@ impl RspamdStatElement {
 		let ms = elapsed.as_millis() as usize;
 		let nv = self.counter.update(value, ms)?;
 
-		// Expire one
-		if self.values.len() >= self.nelts {
-			self.values.pop_front();
-		}
+		if !nv.is_nan() {
+			// Expire one
+			if self.values.len() >= self.nelts {
+				self.values.pop_front();
+			}
 
-		self.values.push_back(nv);
+			self.values.push_back(nv);
+		}
 
 		Ok(nv)
 	}
