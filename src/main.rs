@@ -232,18 +232,19 @@ impl RspamdStat {
 	}
 
 	pub fn display_chart(&self, max_height: u16) {
-		show_specific_counter(&self.spam_stats, 0_u16, max_height);
-		show_specific_counter(&self.ham_stats, 1_u16, max_height);
-		show_specific_counter(&self.junk_stats, 2_u16, max_height);
-		show_specific_counter(&self.total, 3_u16, max_height);
-		show_specific_counter(&self.avg_time, 4_u16, max_height);
+		let mut next_graph_pos = 0_u16;
+		next_graph_pos = show_specific_counter(&self.spam_stats, next_graph_pos, max_height);
+		next_graph_pos = show_specific_counter(&self.ham_stats, next_graph_pos, max_height);
+		next_graph_pos = show_specific_counter(&self.junk_stats, next_graph_pos, max_height);
+		next_graph_pos = show_specific_counter(&self.total, next_graph_pos, max_height);
+		show_specific_counter(&self.avg_time, next_graph_pos, max_height);
 	}
 }
 
 /// Draws a specific graph using CLI graphs
-fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) {
+fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) -> u16 {
 	if elt.values.is_empty() {
-		panic!("tried to display graph for an empty values");
+		return row;
 	}
 
 	let _ = stdout().queue(cursor::MoveTo(0, row * (max_height + 3)));
@@ -264,6 +265,7 @@ fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) {
 			format!("{:.2}", max).red().bold(),
 		));
 	let _ = stdout().write(plot(sliced_values, plot_config).as_bytes());
+	row + 1
 }
 
 /// Update specific counter from a JSON object, multiplying value by `mult`
@@ -278,9 +280,10 @@ fn update_specific_from_json(
 		let extracted = actions_json.get(field);
 		let extracted = extracted.map(|v| v.as_u64().unwrap_or(0_u64));
 		acc + extracted.unwrap_or(0_u64)
-	});
-	elt.update(total as f64 * mult, elapsed)?;
-	Ok(total as f64)
+	}) as f64
+		* mult;
+	elt.update(total, elapsed)?;
+	Ok(total)
 }
 
 #[tokio::main]
