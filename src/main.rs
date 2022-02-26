@@ -1,5 +1,6 @@
 use clap::Parser;
 
+use accurate::{sum::Sum2, traits::SumWithAccumulator};
 use color_eyre::eyre::eyre;
 use colored::Colorize;
 use crossterm::{
@@ -96,39 +97,41 @@ impl Counter<f64> for DiffCounter {
 	}
 }
 
-/// Actions we recognize
+/// Counters we support
 #[derive(Clone, Copy)]
-enum CounterAction {
+enum KnownCounter {
 	Ham,
 	Spam,
 	Junk,
 	Total,
+	AvgTime,
 	Unknown,
 }
 
-impl From<CounterAction> for &'static str {
-	fn from(a: CounterAction) -> &'static str {
+impl From<KnownCounter> for &'static str {
+	fn from(a: KnownCounter) -> &'static str {
 		match a {
-			CounterAction::Ham => "ham",
-			CounterAction::Spam => "spam",
-			CounterAction::Junk => "junk",
-			CounterAction::Total => "total",
-			CounterAction::Unknown => "unknown",
+			KnownCounter::Ham => "ham",
+			KnownCounter::Spam => "spam",
+			KnownCounter::Junk => "junk",
+			KnownCounter::Total => "total",
+			KnownCounter::AvgTime => "average_time",
+			KnownCounter::Unknown => "unknown",
 		}
 	}
 }
 
-impl From<&'static str> for CounterAction {
+impl From<&'static str> for KnownCounter {
 	fn from(s: &'static str) -> Self {
 		match s {
-			"no action" => CounterAction::Ham,
-			"no_action" => CounterAction::Ham,
-			"total" => CounterAction::Total,
-			"add header" => CounterAction::Junk,
-			"add_header" => CounterAction::Junk,
-			"rewrite subject" => CounterAction::Junk,
-			"rewrite_subject" => CounterAction::Junk,
-			_ => CounterAction::Unknown,
+			"no action" => KnownCounter::Ham,
+			"no_action" => KnownCounter::Ham,
+			"total" => KnownCounter::Total,
+			"add header" => KnownCounter::Junk,
+			"add_header" => KnownCounter::Junk,
+			"rewrite subject" => KnownCounter::Junk,
+			"rewrite_subject" => KnownCounter::Junk,
+			_ => KnownCounter::Unknown,
 		}
 	}
 }
@@ -142,7 +145,7 @@ struct RspamdStatElement {
 
 impl RspamdStatElement {
 	/// Creates a new stat element
-	pub fn new(nelts: usize, action: CounterAction, is_gauge: bool) -> Self {
+	pub fn new(nelts: usize, action: KnownCounter, is_gauge: bool) -> Self {
 		let counter: Box<dyn Counter<f64> + Send> = if is_gauge {
 			Box::new(GaugeCounter::new(action.into()))
 		} else {
@@ -179,15 +182,17 @@ struct RspamdStat {
 	ham_stats: RspamdStatElement,
 	junk_stats: RspamdStatElement,
 	total: RspamdStatElement,
+	avg_time: RspamdStatElement,
 }
 
 impl RspamdStat {
 	pub fn new(nelts: usize) -> Self {
 		Self {
-			spam_stats: RspamdStatElement::new(nelts, CounterAction::Spam, false),
-			ham_stats: RspamdStatElement::new(nelts, CounterAction::Ham, false),
-			junk_stats: RspamdStatElement::new(nelts, CounterAction::Junk, false),
-			total: RspamdStatElement::new(nelts, CounterAction::Total, false),
+			spam_stats: RspamdStatElement::new(nelts, KnownCounter::Spam, false),
+			ham_stats: RspamdStatElement::new(nelts, KnownCounter::Ham, false),
+			junk_stats: RspamdStatElement::new(nelts, KnownCounter::Junk, false),
+			total: RspamdStatElement::new(nelts, KnownCounter::Total, false),
+			avg_time: RspamdStatElement::new(nelts, KnownCounter::AvgTime, true),
 		}
 	}
 
@@ -206,6 +211,20 @@ impl RspamdStat {
 			elapsed,
 		)?;
 		self.total.update((spam_cnt + ham_cnt + junk_cnt) as f64, elapsed)?;
+
+		if let Some(scan_times) = json.get("scan_times") {
+			if scan_times.is_array() {
+				let scan_times = scan_times.as_array().unwrap();
+
+				let avg_time = scan_times
+					.iter()
+					.map(|json_num| json_num.as_f64().unwrap_or(f64::NAN))
+					.filter(|num| !num.is_nan())
+					.sum_with_accumulator::<Sum2<_>>();
+				self.avg_time.update(avg_time, elapsed)?;
+			}
+		}
+
 		Ok(())
 	}
 
@@ -214,6 +233,7 @@ impl RspamdStat {
 		show_specific_counter(&self.ham_stats, 1_u16, max_height);
 		show_specific_counter(&self.junk_stats, 2_u16, max_height);
 		show_specific_counter(&self.total, 3_u16, max_height);
+		show_specific_counter(&self.avg_time, 4_u16, max_height);
 	}
 }
 
@@ -233,7 +253,7 @@ fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) {
 		.with_height(max_height as u32)
 		.with_width(elt.nelts() as u32)
 		.with_caption(format!(
-			"Messages per second [Action: {}] [LAST: {}] [AVG: {}] [MIN: {}] [MAX: {}]",
+			"[Label: {}] [LAST: {}] [AVG: {}] [MIN: {}] [MAX: {}]",
 			elt.counter.label().to_string().bold(),
 			format!("{:.2}", last).bright_purple().underline(),
 			format!("{:.2}", avg).white().bold(),
