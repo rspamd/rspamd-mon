@@ -113,11 +113,11 @@ enum KnownCounter {
 impl From<KnownCounter> for &'static str {
 	fn from(a: KnownCounter) -> &'static str {
 		match a {
-			KnownCounter::Ham => "ham",
-			KnownCounter::Spam => "spam",
-			KnownCounter::Junk => "junk",
-			KnownCounter::Total => "total",
-			KnownCounter::AvgTime => "average_time",
+			KnownCounter::Ham => "ham msg/sec",
+			KnownCounter::Spam => "spam msg/sec",
+			KnownCounter::Junk => "junk msg/sec",
+			KnownCounter::Total => "total msg/sec",
+			KnownCounter::AvgTime => "average_time sec",
 			KnownCounter::Unknown => "unknown",
 		}
 	}
@@ -221,12 +221,16 @@ impl RspamdStat {
 			if scan_times.is_array() {
 				let scan_times = scan_times.as_array().unwrap();
 
-				let avg_time = scan_times
+				let avg_times = scan_times
 					.iter()
 					.map(|json_num| json_num.as_f64().unwrap_or(f64::NAN))
 					.filter(|num| !num.is_nan())
-					.sum_with_accumulator::<Sum2<_>>();
-				self.avg_time.update(avg_time, elapsed)?;
+					.collect::<Vec<_>>();
+				if !avg_times.is_empty() {
+					let cnt = avg_times.len() as f64;
+					let avg_time = avg_times.sum_with_accumulator::<Sum2<_>>() / cnt;
+					self.avg_time.update(avg_time, elapsed)?;
+				}
 			}
 		}
 
