@@ -66,7 +66,7 @@ impl Counter<f64> for GaugeCounter {
 	}
 
 	fn new(label: &'static str) -> Self {
-		Self(CounterData { cur_value: 0_f64, label })
+		Self(CounterData { cur_value: f64::NAN, label })
 	}
 
 	fn label(&self) -> &'static str {
@@ -202,13 +202,16 @@ impl RspamdStat {
 		elapsed: Duration,
 	) -> Result<(), Box<dyn Error + Send + Sync>> {
 		let actions = json.get("actions").ok_or(eyre!("missing actions"))?;
-		let spam_cnt = update_specific_from_json(&mut self.spam_stats, actions, ["reject"].as_slice(), elapsed)?;
-		let ham_cnt = update_specific_from_json(&mut self.ham_stats, actions, ["no action"].as_slice(), elapsed)?;
+		let spam_cnt =
+			update_specific_from_json(&mut self.spam_stats, actions, ["reject"].as_slice(), elapsed, 1000.0_f64)?;
+		let ham_cnt =
+			update_specific_from_json(&mut self.ham_stats, actions, ["no action"].as_slice(), elapsed, 1000.0_f64)?;
 		let junk_cnt = update_specific_from_json(
 			&mut self.junk_stats,
 			actions,
 			["add header", "rewrite subject"].as_slice(),
 			elapsed,
+			1000.0_f64,
 		)?;
 		self.total.update((spam_cnt + ham_cnt + junk_cnt) as f64, elapsed)?;
 
@@ -237,18 +240,18 @@ impl RspamdStat {
 	}
 }
 
+/// Draws a specific graph using CLI graphs
 fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) {
 	if elt.values.is_empty() {
 		panic!("tried to display graph for an empty values");
 	}
 
 	let _ = stdout().queue(cursor::MoveTo(0, row * (max_height + 3)));
-
-	let scaled_values: VecDeque<f64> = elt.values.iter().map(|v| *v * 1000_f64).collect();
-	let avg = scaled_values.iter().sum::<f64>() / scaled_values.len() as f64;
-	let min = *scaled_values.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0_f64);
-	let max = *scaled_values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0_f64);
-	let last = *scaled_values.back().unwrap_or(&0.0);
+	let sliced_values: Vec<f64> = elt.values.iter().cloned().collect();
+	let avg = sliced_values.iter().sum::<f64>() / sliced_values.len() as f64;
+	let min = *sliced_values.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0_f64);
+	let max = *sliced_values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0_f64);
+	let last = *sliced_values.last().unwrap_or(&0.0);
 	let plot_config = Config::default()
 		.with_height(max_height as u32)
 		.with_width(elt.nelts() as u32)
@@ -260,21 +263,23 @@ fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) {
 			format!("{:.2}", min).green().bold(),
 			format!("{:.2}", max).red().bold(),
 		));
-	let _ = stdout().write(plot(scaled_values.into(), plot_config).as_bytes());
+	let _ = stdout().write(plot(sliced_values, plot_config).as_bytes());
 }
 
+/// Update specific counter from a JSON object, multiplying value by `mult`
 fn update_specific_from_json(
 	elt: &mut RspamdStatElement,
 	actions_json: &serde_json::Value,
 	field: &[&'static str],
 	elapsed: Duration,
+	mult: f64,
 ) -> Result<f64, Box<dyn Error + Send + Sync>> {
 	let total = field.iter().fold(0_u64, |acc, field| {
 		let extracted = actions_json.get(field);
 		let extracted = extracted.map(|v| v.as_u64().unwrap_or(0_u64));
 		acc + extracted.unwrap_or(0_u64)
 	});
-	elt.update(total as f64, elapsed)?;
+	elt.update(total as f64 * mult, elapsed)?;
 	Ok(total as f64)
 }
 
