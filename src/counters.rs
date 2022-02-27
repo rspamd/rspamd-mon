@@ -235,3 +235,51 @@ fn update_specific_from_json(
 	elt.update(total, elapsed)?;
 	Ok(total)
 }
+
+#[cfg(test)]
+mod tests {
+	use crate::counters::{KnownCounter, RspamdStat, RspamdStatElement};
+	use std::time::Duration;
+
+	#[test]
+	fn diff_counter_test() {
+		let mut ctr = RspamdStatElement::new(2, KnownCounter::Unknown, false);
+		let elapsed = Duration::from_millis(1);
+		assert!(ctr.update(1_f64, elapsed).unwrap().is_nan());
+		assert!(ctr.values.is_empty());
+		assert_eq!(ctr.update(2_f64, elapsed).unwrap(), 1_f64);
+		assert_eq!(ctr.values[0], 1_f64);
+		assert_eq!(ctr.update(2_f64, elapsed).unwrap(), 0_f64);
+		assert_eq!(ctr.values[0], 1_f64);
+		assert_eq!(ctr.values[1], 0_f64);
+		assert_eq!(ctr.update(3_f64, elapsed).unwrap(), 1_f64);
+		assert_eq!(ctr.values[0], 0_f64);
+		assert_eq!(ctr.values[1], 1_f64);
+	}
+
+	#[test]
+	fn gauge_counter_test() {
+		let mut ctr = RspamdStatElement::new(2, KnownCounter::Unknown, true);
+		let elapsed = Duration::from_millis(1);
+		assert!(ctr.update(1_f64, elapsed).unwrap().is_nan());
+		assert!(ctr.values.is_empty());
+		assert_eq!(ctr.update(2_f64, elapsed).unwrap(), 1_f64);
+		assert_eq!(ctr.values[0], 1_f64);
+		assert_eq!(ctr.update(2_f64, elapsed).unwrap(), 2_f64);
+		assert_eq!(ctr.values[0], 1_f64);
+		assert_eq!(ctr.values[1], 2_f64);
+		assert_eq!(ctr.update(3_f64, elapsed).unwrap(), 2_f64);
+		assert_eq!(ctr.values[0], 2_f64);
+		assert_eq!(ctr.values[1], 2_f64);
+	}
+
+	#[test]
+	fn update_from_json() {
+		let json = r#"
+		{"version":"3.2","config_id":"8nm93w87h5zfhzxxtfqy3k7sb5afrfx7u77fdg7d984pd53hair54rwdgcfk9yizc9kebg8x5f6r5bfz3jjz4gmcgxb4kf4iyhnxmbn","uptime":60901,"read_only":false,"scanned":3216735051,"learned":0,"actions":{"reject":995165214,"soft reject":0,"rewrite subject":0,"add header":4187423843,"greylist":275270625,"no action":2053842666},"scan_times":[0.507925,0.209795,0.223006,0.647264,0.529891,0.273673,0.537307,0.533161,0.539620,0.535399,0.540692,0.227740,0.540794,0.254937,0.498498,0.220530,0.477884,0.555480,0.502577,0.499710,0.424071,0.485661,0.505764,0.492892,0.495350,0.260113,0.597570,0.588293,0.501595,0.519670,0.504542],"spam_count":5182589057,"ham_count":2329113291,"connections":18424244,"control_connections":881,"pools_allocated":18425045,"pools_freed":18425058,"bytes_allocated":1884077939,"chunks_allocated":2597,"shared_chunks_allocated":15,"chunks_freed":0,"chunks_oversized":7268949,"fragmented":0,"total_learns":0,"statfiles":[]}
+		"#;
+		let elapsed = Duration::from_secs(1);
+		let mut stats = RspamdStat::new(2);
+		assert!(stats.update_from_json(serde_json::from_str(json).unwrap(), elapsed).is_ok());
+	}
+}
