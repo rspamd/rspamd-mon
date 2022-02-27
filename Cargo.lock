@@ -1026,6 +1026,7 @@ dependencies = [
  "env_logger",
  "futures",
  "log",
+ "owo-colors",
  "rasciigraph",
  "reqwest",
  "serde",

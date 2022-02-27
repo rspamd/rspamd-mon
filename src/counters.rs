@@ -1,45 +1,11 @@
-use clap::Parser;
-
 use accurate::{sum::Sum2, traits::SumWithAccumulator};
 use color_eyre::eyre::eyre;
-use colored::Colorize;
-use crossterm::{
-	cursor,
-	terminal::{Clear, ClearType},
-	QueueableCommand,
-};
-use futures::lock::Mutex;
-use log::LevelFilter;
-use rasciigraph::{plot, Config};
-use std::{
-	collections::VecDeque,
-	error::Error,
-	io::{stdout, Write},
-	sync::Arc,
-	time::Duration,
-};
 
-const MAX_NET_ERRORS: i32 = 5;
+use std::{collections::VecDeque, error::Error, time::Duration};
 
-#[derive(Debug, Parser)]
-pub(crate) struct CliOpts {
-	/// Chart width.
-	#[clap(long, default_value = "80")]
-	chart_width: usize,
-	/// Chart height.
-	#[clap(long, default_value = "6")]
-	chart_height: usize,
-	#[clap(name = "url", long, default_value = "http://localhost:11334/stat")]
-	url: String,
-	/// Verbosity level: -v - info, -vv - debug, -vvv - trace
-	#[clap(short = 'v', long, parse(from_occurrences))]
-	verbose: i8,
-	/// How often do we poll Rspamd
-	#[clap(long, default_value = "1.0")]
-	timeout: f32,
-}
+use crate::plot::*;
 
-struct CounterData<T> {
+pub struct CounterData<T> {
 	/// Current counter value
 	cur_value: T,
 	/// Label for a counter
@@ -58,7 +24,7 @@ pub trait Counter<T> {
 }
 
 /// A counter which is used to represent gauge
-struct GaugeCounter(CounterData<f64>);
+pub struct GaugeCounter(CounterData<f64>);
 
 impl Counter<f64> for GaugeCounter {
 	fn update(&mut self, new_value: f64, _ms: usize) -> Result<f64, Box<dyn Error + Send + Sync>> {
@@ -77,7 +43,7 @@ impl Counter<f64> for GaugeCounter {
 }
 
 /// A counter that checks the difference
-struct DiffCounter(CounterData<f64>);
+pub struct DiffCounter(CounterData<f64>);
 
 impl Counter<f64> for DiffCounter {
 	fn update(&mut self, new_value: f64, ms: usize) -> Result<f64, Box<dyn Error + Send + Sync>> {
@@ -101,7 +67,7 @@ impl Counter<f64> for DiffCounter {
 
 /// Counters we support
 #[derive(Clone, Copy)]
-enum KnownCounter {
+pub enum KnownCounter {
 	Ham,
 	Spam,
 	Junk,
@@ -139,10 +105,10 @@ impl From<&'static str> for KnownCounter {
 }
 
 /// Used to track each action
-struct RspamdStatElement {
-	values: VecDeque<f64>,
-	counter: Box<dyn Counter<f64> + Send>,
-	nelts: usize,
+pub struct RspamdStatElement {
+	pub values: VecDeque<f64>,
+	pub counter: Box<dyn Counter<f64> + Send>,
+	pub nelts: usize,
 }
 
 impl RspamdStatElement {
@@ -179,7 +145,7 @@ impl RspamdStatElement {
 }
 
 /// Structure that holds all elements
-struct RspamdStat {
+pub struct RspamdStat {
 	spam_stats: RspamdStatElement,
 	ham_stats: RspamdStatElement,
 	junk_stats: RspamdStatElement,
@@ -188,6 +154,7 @@ struct RspamdStat {
 }
 
 impl RspamdStat {
+	/// Create new stats object
 	pub fn new(nelts: usize) -> Self {
 		Self {
 			spam_stats: RspamdStatElement::new(nelts, KnownCounter::Spam, false),
@@ -198,6 +165,7 @@ impl RspamdStat {
 		}
 	}
 
+	/// Update stats from JSON received from Rspamd
 	pub fn update_from_json(
 		&mut self,
 		json: serde_json::Value,
@@ -237,41 +205,17 @@ impl RspamdStat {
 		Ok(())
 	}
 
-	pub fn display_chart(&self, max_height: u16) {
+	/// Display CLI plot
+	pub fn display_plot(&self, max_height: u16) {
+		prepare_term();
 		let mut next_graph_pos = 0_u16;
 		next_graph_pos = show_specific_counter(&self.spam_stats, next_graph_pos, max_height);
 		next_graph_pos = show_specific_counter(&self.ham_stats, next_graph_pos, max_height);
 		next_graph_pos = show_specific_counter(&self.junk_stats, next_graph_pos, max_height);
 		next_graph_pos = show_specific_counter(&self.total, next_graph_pos, max_height);
 		show_specific_counter(&self.avg_time, next_graph_pos, max_height);
+		finalise_term();
 	}
-}
-
-/// Draws a specific graph using CLI graphs
-fn show_specific_counter(elt: &RspamdStatElement, row: u16, max_height: u16) -> u16 {
-	if elt.values.is_empty() {
-		return row;
-	}
-
-	let _ = stdout().queue(cursor::MoveTo(0, row * (max_height + 3)));
-	let sliced_values: Vec<f64> = elt.values.iter().cloned().collect();
-	let avg = sliced_values.iter().sum::<f64>() / sliced_values.len() as f64;
-	let min = *sliced_values.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0_f64);
-	let max = *sliced_values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&0_f64);
-	let last = *sliced_values.last().unwrap_or(&0.0);
-	let plot_config = Config::default()
-		.with_height(max_height as u32)
-		.with_width(elt.nelts() as u32)
-		.with_caption(format!(
-			"[Label: {}] [LAST: {}] [AVG: {}] [MIN: {}] [MAX: {}]",
-			elt.counter.label().to_string().bold(),
-			format!("{:.2}", last).bright_purple().underline(),
-			format!("{:.2}", avg).white().bold(),
-			format!("{:.2}", min).green().bold(),
-			format!("{:.2}", max).red().bold(),
-		));
-	let _ = stdout().write(plot(sliced_values, plot_config).as_bytes());
-	row + 1
 }
 
 /// Update specific counter from a JSON object, multiplying value by `mult`
@@ -290,81 +234,4 @@ fn update_specific_from_json(
 		* mult;
 	elt.update(total, elapsed)?;
 	Ok(total)
-}
-
-#[tokio::main]
-async fn main() -> color_eyre::Result<()> {
-	color_eyre::install()?;
-
-	let opts = CliOpts::parse();
-
-	let log_level = match opts.verbose {
-		0 => LevelFilter::Warn,
-		1 => LevelFilter::Info,
-		2 => LevelFilter::Debug,
-		_ => LevelFilter::Trace,
-	};
-
-	env_logger::Builder::from_default_env()
-		.filter(None, log_level)
-		.format_timestamp(Some(env_logger::fmt::TimestampPrecision::Micros))
-		.try_init()?;
-
-	let stats = Arc::new(Mutex::new(RspamdStat::new(opts.chart_width)));
-
-	tokio::spawn(async move {
-		let stats = stats.clone();
-		let mut niter = 0;
-		let mut error_counter = 0;
-		let mut elapsed = Duration::from_secs_f32(opts.timeout);
-		loop {
-			let timeout = Duration::from_secs_f32(opts.timeout);
-			let client = reqwest::Client::builder().timeout(timeout).user_agent("rspamd-mon").build()?;
-			let req = client.get(opts.url.as_str()).send();
-			let resp = match req.await {
-				Ok(o) => o.bytes(),
-				Err(e) => {
-					// We should be able to send request
-					return Err(eyre!("cannot get send request to {}: {}", opts.url.as_str(), e));
-				},
-			};
-			let res = match resp.await {
-				Ok(o) => {
-					let json: serde_json::Value = serde_json::from_slice(&o)
-						.map_err(|e| eyre!("malformed json from {}: {}", opts.url.as_str(), e))?;
-					let mut stats_unlocked = stats.lock().await;
-					stats_unlocked
-						.update_from_json(json, elapsed)
-						.map_err(|e| eyre!("cannot get results from {}: {}", opts.url.as_str(), e))?;
-					if niter > 0 {
-						let _ = stdout().queue(Clear(ClearType::All)).unwrap();
-						stats_unlocked.display_chart(opts.chart_height as u16);
-					}
-					niter += 1;
-
-					Ok(())
-				},
-				Err(e) => Err(eyre!("cannot get results from {}: {}", opts.url.as_str(), e)),
-			};
-
-			let _ = if let Err(e) = res {
-				error_counter += 1;
-				elapsed = elapsed + elapsed;
-
-				if error_counter > MAX_NET_ERRORS {
-					Err(e)
-				} else {
-					Ok(())
-				}
-			} else {
-				error_counter = 0;
-				elapsed = timeout;
-				Ok(())
-			}?;
-
-			let _ = stdout().flush();
-			tokio::time::sleep(timeout).await;
-		}
-	})
-	.await?
 }
