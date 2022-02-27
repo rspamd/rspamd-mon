@@ -733,6 +733,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nix"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f866317acbd3a240710c63f065ffb1e4fd466259045ccb504130b7f668f35c6"
+dependencies = [
+ "bitflags",
+ "cc",
+ "cfg-if",
+ "libc",
+ "memoffset",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -869,6 +882,16 @@ name = "pkg-config"
 version = "0.3.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58893f751c9b0412871a09abd62ecd2a00298c6c83befa223ef98c52aef40cbe"
+
+[[package]]
+name = "privdrop"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c02cf257b10e4b807bccadb19630d5dea7e0369c3c5e84673ee8e58dc8da6a5"
+dependencies = [
+ "libc",
+ "nix",
+]
 
 [[package]]
 name = "proc-macro-error"
@@ -1027,6 +1050,7 @@ dependencies = [
  "futures",
  "log",
  "owo-colors",
+ "privdrop",
  "rasciigraph",
  "reqwest",
  "serde",
