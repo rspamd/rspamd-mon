@@ -21,6 +21,8 @@ pub trait Counter<T> {
 	where
 		Self: Sized + Send + Sync;
 	fn label(&self) -> &'static str;
+	/// Returns a current value of the counter
+	fn cur_value(&self) -> T;
 }
 
 /// A counter which is used to represent gauge
@@ -39,6 +41,10 @@ impl Counter<f64> for GaugeCounter {
 
 	fn label(&self) -> &'static str {
 		self.0.label
+	}
+
+	fn cur_value(&self) -> f64 {
+		self.0.cur_value
 	}
 }
 
@@ -62,6 +68,10 @@ impl Counter<f64> for DiffCounter {
 
 	fn label(&self) -> &'static str {
 		self.0.label
+	}
+
+	fn cur_value(&self) -> f64 {
+		self.0.cur_value
 	}
 }
 
@@ -142,15 +152,18 @@ impl RspamdStatElement {
 	pub fn nelts(&self) -> usize {
 		self.nelts
 	}
+	pub fn cur_value(&self) -> f64 {
+		self.counter.cur_value()
+	}
 }
 
 /// Structure that holds all elements
 pub struct RspamdStat {
-	spam_stats: RspamdStatElement,
-	ham_stats: RspamdStatElement,
-	junk_stats: RspamdStatElement,
-	total: RspamdStatElement,
-	avg_time: RspamdStatElement,
+	pub spam_stats: RspamdStatElement,
+	pub ham_stats: RspamdStatElement,
+	pub junk_stats: RspamdStatElement,
+	pub total: RspamdStatElement,
+	pub avg_time: RspamdStatElement,
 }
 
 impl RspamdStat {
